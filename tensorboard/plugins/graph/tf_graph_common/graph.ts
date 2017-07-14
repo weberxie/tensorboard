@@ -931,7 +931,7 @@ function addEdgeToGraph(
 }
 
 export function build(
-    rawNodes: tf.graph.proto.NodeDef[], params: BuildParams,
+    graphDef: tf.graph.proto.GraphDef, params: BuildParams,
     tracker: ProgressTracker): Promise<SlimGraph|void> {
   /**
    * A dictionary that maps each in-embedding node name to the node
@@ -960,6 +960,7 @@ export function build(
    * Experimentation shows that around 30% of the array will go unused, and
    * even for very large networks that amounts to less than 10k spaces.
    */
+  let rawNodes = graphDef.node;
   let nodeNames = new Array<string>(rawNodes.length);
 
   return tf.graph.util
@@ -992,8 +993,51 @@ export function build(
               nodeNames[index] = opNode.name;
               index++;
             });
+
+            const processFunction = function(func: tf.graph.proto.FunctionDef) {
+              // Give the function itself a node.
+              const functionNodeName = func.signature.name + ' (function)';
+              const functionOpNode = new OpNodeImpl({
+                name: functionNodeName,
+                input: [],
+                device: '',
+                op: '',
+                attr: [],
+              });
+              opNodes[index] = functionOpNode;
+              nodeNames[index] = functionOpNode.name;
+              index++;
+
+              _.each(func.node_def, rawNode => {
+                // Add all the nodes of this function to the graph. Prefix
+                // with the name of the function so that the graph correctly
+                // computes the hierarchy.
+                rawNode.name = functionNodeName + '/' + rawNode.name;
+                const opNode = new OpNodeImpl(rawNode);
+                opNodes[index] = opNode;
+                nodeNames[index] = opNode.name;
+                index++;
+              });
+            };
+
+            if (graphDef.library && graphDef.library.function) {
+              // This graph contains functions.
+              if (graphDef.library.function['length'] >= 0) {
+                // The graph has several functions.
+                _.each(
+                  graphDef.library.function as tf.graph.proto.FunctionDef[],
+                  processFunction);
+              } else {
+                // The graph has 1 function. Unfortunately, in that case, the
+                // function property is a single function (not an array).
+                processFunction(
+                  graphDef.library.function as tf.graph.proto.FunctionDef);
+              }
+            }
+
             opNodes.splice(index);
             nodeNames.splice(index);
+
             return opNodes;
           },
           tracker)

@@ -521,6 +521,7 @@ limitations under the License.
 <div class="titleContainer">
   <div id="title" class="title">Main Graph</div>
   <div id="auxTitle" class="auxTitle">Auxiliary Nodes</div>
+  <div id="functionsTitle" class="functionsTitle">Functions</div>
 </div>
 <svg id="svg">
   <defs>
@@ -900,6 +901,8 @@ Polymer({
     var mainGraphTitleElement = this.getElementsByClassName('title')[0];
     var titleStyle = mainGraphTitleElement.style;
     var auxTitleStyle = this.getElementsByClassName('auxTitle')[0].style;
+    var functionsTitleStyle =
+        this.getElementsByClassName('functionsTitle')[0].style;
     var core = d3.select("." + tf.graph.scene.Class.Scene.GROUP + ">." +
       tf.graph.scene.Class.Scene.CORE).node();
     // Only show labels if the graph is fully loaded.
@@ -909,7 +912,11 @@ Polymer({
           tf.graph.scene.Class.Scene.INEXTRACT).node() ||
         d3.select("." + tf.graph.scene.Class.Scene.GROUP + ">." +
           tf.graph.scene.Class.Scene.OUTEXTRACT).node();
+
       var coreX = core.getCTM().e;
+
+      // Only show the title for auxiliary nodes if the auxiliary section is
+      // visible.
       var auxX = aux ? aux.getCTM().e : null;
       titleStyle.display = 'inline';
       titleStyle.left = coreX + 'px';
@@ -925,9 +932,12 @@ Polymer({
       } else {
         auxTitleStyle.display = 'none';
       }
+
+      // TODO(chizeng): Compute the offset for the section on functions here.
     } else {
       titleStyle.display='none';
       auxTitleStyle.display = 'none';
+      functionsTitleStyle.display = 'none';
     }
   },
   /**

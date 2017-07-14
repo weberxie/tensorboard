@@ -60,9 +60,11 @@ module tf.graph.scene {
       GROUP: 'scene',
       CORE: 'core',
       INEXTRACT: 'in-extract',
-      OUTEXTRACT: 'out-extract'
+      OUTEXTRACT: 'out-extract',
+      FUNCTION: 'function',
     },
     Subscene: {GROUP: 'subscene'},
+    FUNCTIONNODE: 'function',
     OPNODE: 'op',
     METANODE: 'meta',
     SERIESNODE: 'series',
