@@ -14,8 +14,9 @@ py_library(
     srcs_version = "PY2AND3",
     visibility = ["//visibility:public"],
     deps = [
+        ":metadata",
+        "//tensorboard:plugin_util",
         "//tensorboard/backend:http_util",
-        "//tensorboard/backend/event_processing:event_accumulator",
         "//tensorboard/plugins:base_plugin",
         "@org_pocoo_werkzeug",
         "@org_pythonhosted_six",
@@ -30,6 +31,7 @@ py_test(
     srcs_version = "PY2AND3",
     deps = [
         ":histograms_plugin",
+        ":summary",
         "//tensorboard:expect_tensorflow_installed",
         "//tensorboard/backend:application",
         "//tensorboard/backend/event_processing:event_accumulator",
@@ -40,11 +42,50 @@ py_test(
     ],
 )
 
+py_library(
+    name = "metadata",
+    srcs = ["metadata.py"],
+    srcs_version = "PY2AND3",
+    visibility = [
+        "//tensorboard:internal",
+    ],
+    deps = [
+        "//tensorboard:expect_tensorflow_installed",
+    ],
+)
+
+py_library(
+    name = "summary",
+    srcs = ["summary.py"],
+    srcs_version = "PY2AND3",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        ":metadata",
+        "//tensorboard:expect_tensorflow_installed",
+    ],
+)
+
+py_test(
+    name = "summary_test",
+    size = "small",
+    srcs = ["summary_test.py"],
+    main = "summary_test.py",
+    srcs_version = "PY2AND3",
+    deps = [
+        ":summary",
+        "//tensorboard:expect_tensorflow_installed",
+        "@org_pythonhosted_six",
+    ],
+)
+
 py_binary(
     name = "histograms_demo",
     srcs = ["histograms_demo.py"],
     srcs_version = "PY2AND3",
     deps = [
+        ":summary",
         "//tensorboard:expect_tensorflow_installed",
         "@org_pythonhosted_six",
     ],

@@ -22,7 +22,8 @@ export type Point = {x: number, y: number};
 /**
  * Color parameters for op nodes.
  */
-export let OpNodeColors = {DEFAULT_FILL: 'white', DEFAULT_STROKE: '#b2b2b2'};
+export let OpNodeColors = {DEFAULT_FILL: '#ffffff', DEFAULT_STROKE: '#b2b2b2',
+                           COMPATIBLE: '#0f9d58', INCOMPATIBLE: '#db4437'};
 
 /**
  * Color parameters for node encoding.
@@ -334,15 +335,35 @@ export class RenderGraphInfo {
    */
   getNearestVisibleAncestor(name: string): string {
     let path = getHierarchicalPath(name);
-    for (let i = 0; i < path.length; i++) {
-      let nodeName = path[i];
+    let i = 0;
+    let renderNode: RenderNodeInfo = null;
+    // Fallthrough. If everything was expanded return the node.
+    let nodeName = name;
+    for (; i < path.length; i++) {
+      nodeName = path[i];
+      renderNode = this.getRenderNodeByName(nodeName);
       // Op nodes have expanded set to false by default.
-      if (!this.getRenderNodeByName(nodeName).expanded) {
-        return nodeName;
+      if (!renderNode.expanded) {
+        break;
       }
     }
-    // Fallthrough. If everything was expanded return the node.
-    return name;
+
+    // Check case where highlighted node is an embedded node whose parent node
+    // is also its hierarchical parent. In this case, we want to return the
+    // embedded node name, as it is also displayed if its parent has been
+    // displayed.
+    if (i == path.length - 2) {
+      let nextName = path[i + 1];
+      if (renderNode.inAnnotations.nodeNames[nextName]) {
+        return nextName;
+      }
+
+      if (renderNode.outAnnotations.nodeNames[nextName]) {
+        return nextName;
+      }
+    }
+
+    return nodeName;
   }
 
   // TODO: Delete this an any code it touches (all deprecated).
@@ -411,15 +432,17 @@ export class RenderGraphInfo {
       if (!childNode.isGroupNode) {
         _.each((<OpNode>childNode).inEmbeddings, embedding => {
           let renderMetaedgeInfo = new RenderMetaedgeInfo(null);
-          addInAnnotation(childRenderInfo, embedding, null, renderMetaedgeInfo,
+          let renderNodeInfo = new RenderNodeInfo(embedding);
+          addInAnnotation(childRenderInfo, embedding, renderNodeInfo, renderMetaedgeInfo,
               AnnotationType.CONSTANT);
-          this.index[embedding.name] = new RenderNodeInfo(embedding);
+          this.index[embedding.name] = renderNodeInfo;
         });
         _.each((<OpNode>childNode).outEmbeddings, embedding => {
           let renderMetaedgeInfo = new RenderMetaedgeInfo(null);
-          addOutAnnotation(childRenderInfo, embedding, null, renderMetaedgeInfo,
+          let renderNodeInfo = new RenderNodeInfo(embedding);
+          addOutAnnotation(childRenderInfo, embedding, renderNodeInfo, renderMetaedgeInfo,
               AnnotationType.SUMMARY);
-          this.index[embedding.name] = new RenderNodeInfo(embedding);
+          this.index[embedding.name] = renderNodeInfo;
         });
       }
 

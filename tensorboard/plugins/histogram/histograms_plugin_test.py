@@ -22,6 +22,7 @@ from __future__ import print_function
 import collections
 import os.path
 
+import six
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 
@@ -29,15 +30,22 @@ from tensorboard.backend.event_processing import event_accumulator
 from tensorboard.backend.event_processing import event_multiplexer
 from tensorboard.plugins import base_plugin
 from tensorboard.plugins.histogram import histograms_plugin
+from tensorboard.plugins.histogram import summary
 
 
 class HistogramsPluginTest(tf.test.TestCase):
 
   _STEPS = 99
 
+  _LEGACY_HISTOGRAM_TAG = 'my-ancient-histogram'
   _HISTOGRAM_TAG = 'my-favorite-histogram'
   _SCALAR_TAG = 'my-boring-scalars'
 
+  _DISPLAY_NAME = 'Important production statistics'
+  _DESCRIPTION = 'quod *erat* scribendum'
+  _HTML_DESCRIPTION = '<p>quod <em>erat</em> scribendum</p>'
+
+  _RUN_WITH_LEGACY_HISTOGRAM = '_RUN_WITH_LEGACY_HISTOGRAM'
   _RUN_WITH_HISTOGRAM = '_RUN_WITH_HISTOGRAM'
   _RUN_WITH_SCALARS = '_RUN_WITH_SCALARS'
 
@@ -52,8 +60,7 @@ class HistogramsPluginTest(tf.test.TestCase):
       self.generate_run(run_name)
     multiplexer = event_multiplexer.EventMultiplexer(size_guidance={
         # don't truncate my test data, please
-        event_accumulator.HISTOGRAMS:
-            self._STEPS,
+        event_accumulator.TENSORS: self._STEPS,
     })
     multiplexer.AddRunsFromDirectory(self.logdir)
     multiplexer.Reload()
@@ -61,19 +68,20 @@ class HistogramsPluginTest(tf.test.TestCase):
     self.plugin = histograms_plugin.HistogramsPlugin(context)
 
   def generate_run(self, run_name):
-    if run_name == self._RUN_WITH_HISTOGRAM:
-      (use_histogram, use_scalars) = (True, False)
-    elif run_name == self._RUN_WITH_SCALARS:
-      (use_histogram, use_scalars) = (False, True)
-    else:
-      assert False, 'Invalid run name: %r' % run_name
     tf.reset_default_graph()
     sess = tf.Session()
     placeholder = tf.placeholder(tf.float32, shape=[3])
-    if use_histogram:
-      tf.summary.histogram(self._HISTOGRAM_TAG, placeholder)
-    if use_scalars:
+
+    if run_name == self._RUN_WITH_LEGACY_HISTOGRAM:
+      tf.summary.histogram(self._LEGACY_HISTOGRAM_TAG, placeholder)
+    elif run_name == self._RUN_WITH_HISTOGRAM:
+      summary.op(self._HISTOGRAM_TAG, placeholder,
+                 display_name=self._DISPLAY_NAME,
+                 description=self._DESCRIPTION)
+    elif run_name == self._RUN_WITH_SCALARS:
       tf.summary.scalar(self._SCALAR_TAG, tf.reduce_mean(placeholder))
+    else:
+      assert False, 'Invalid run name: %r' % run_name
     summ = tf.summary.merge_all()
 
     subdir = os.path.join(self.logdir, run_name)
@@ -85,7 +93,7 @@ class HistogramsPluginTest(tf.test.TestCase):
       writer.add_summary(s, global_step=step)
     writer.close()
 
-  def testRoutesProvided(self):
+  def test_routes_provided(self):
     """Tests that the plugin offers the correct routes."""
     self.set_up_with_runs([self._RUN_WITH_SCALARS])
     routes = self.plugin.get_plugin_apps()
@@ -93,36 +101,79 @@ class HistogramsPluginTest(tf.test.TestCase):
     self.assertIsInstance(routes['/tags'], collections.Callable)
 
   def test_index(self):
-    self.set_up_with_runs([self._RUN_WITH_HISTOGRAM, self._RUN_WITH_SCALARS])
+    self.set_up_with_runs([self._RUN_WITH_SCALARS,
+                           self._RUN_WITH_LEGACY_HISTOGRAM,
+                           self._RUN_WITH_HISTOGRAM])
     self.assertEqual({
-        self._RUN_WITH_HISTOGRAM: [self._HISTOGRAM_TAG],
-        self._RUN_WITH_SCALARS: [],
+        self._RUN_WITH_SCALARS: {},
+        self._RUN_WITH_LEGACY_HISTOGRAM: {
+            self._LEGACY_HISTOGRAM_TAG: {
+                'displayName': self._LEGACY_HISTOGRAM_TAG,
+                'description': '',
+            },
+        },
+        self._RUN_WITH_HISTOGRAM: {
+            '%s/histogram_summary' % self._HISTOGRAM_TAG: {
+                'displayName': self._DISPLAY_NAME,
+                'description': self._HTML_DESCRIPTION,
+            },
+        },
     }, self.plugin.index_impl())
 
-  def _test_histograms(self, run_name, should_have_histogram):
-    self.set_up_with_runs([self._RUN_WITH_HISTOGRAM, self._RUN_WITH_SCALARS])
-    if should_have_histogram:
-      (data, mime_type) = self.plugin.histograms_impl(self._HISTOGRAM_TAG,
-                                                      run_name)
-      self.assertEqual('application/json', mime_type)
-      self.assertEqual(len(data), self._STEPS)
-      for i in xrange(self._STEPS):
-        frame = data[i]
-        self.assertEqual(i, frame.step)
-        self.assertEqual(1 + i, frame.histogram_value.min)
-        self.assertEqual(3 + i, frame.histogram_value.max)
-        self.assertAlmostEqual(
-            3,  # three items across all buckets
-            sum(frame.histogram_value.bucket))
+  def _test_histograms(self, run_name, tag_name, should_work=True):
+    self.set_up_with_runs([self._RUN_WITH_SCALARS,
+                           self._RUN_WITH_LEGACY_HISTOGRAM,
+                           self._RUN_WITH_HISTOGRAM])
+    if should_work:
+      self._check_histograms_result(tag_name, run_name, downsample=False)
+      self._check_histograms_result(tag_name, run_name, downsample=True)
     else:
-      with self.assertRaises(KeyError):
+      with six.assertRaisesRegex(self, ValueError, 'No histogram tag'):
         self.plugin.histograms_impl(self._HISTOGRAM_TAG, run_name)
 
+  def _check_histograms_result(self, tag_name, run_name, downsample):
+    if downsample:
+      downsample_to = 50
+      expected_length = 50
+    else:
+      downsample_to = None
+      expected_length = self._STEPS
+
+    (data, mime_type) = self.plugin.histograms_impl(tag_name, run_name,
+                                                    downsample_to=downsample_to)
+    self.assertEqual('application/json', mime_type)
+    self.assertEqual(expected_length, len(data),
+                     'expected %r, got %r (downsample=%r)'
+                     % (expected_length, len(data), downsample))
+    last_step_seen = None
+    for (i, datum) in enumerate(data):
+      [_unused_wall_time, step, buckets] = datum
+      if last_step_seen is not None:
+        self.assertGreater(step, last_step_seen)
+      last_step_seen = step
+      if not downsample:
+        self.assertEqual(i, step)
+      self.assertEqual(1 + step, buckets[0][0])   # first left-edge
+      self.assertEqual(3 + step, buckets[-1][1])  # last right-edge
+      self.assertAlmostEqual(
+          3,  # three items across all buckets
+          sum(bucket[2] for bucket in buckets))
+
   def test_histograms_with_scalars(self):
-    self._test_histograms(self._RUN_WITH_HISTOGRAM, True)
+    self._test_histograms(self._RUN_WITH_SCALARS, self._HISTOGRAM_TAG,
+                          should_work=False)
+
+  def test_histograms_with_legacy_histogram(self):
+    self._test_histograms(self._RUN_WITH_LEGACY_HISTOGRAM,
+                          self._LEGACY_HISTOGRAM_TAG)
 
   def test_histograms_with_histogram(self):
-    self._test_histograms(self._RUN_WITH_SCALARS, False)
+    self._test_histograms(self._RUN_WITH_HISTOGRAM,
+                          '%s/histogram_summary' % self._HISTOGRAM_TAG)
+
+  def test_active_with_legacy_histogram(self):
+    self.set_up_with_runs([self._RUN_WITH_LEGACY_HISTOGRAM])
+    self.assertTrue(self.plugin.is_active())
 
   def test_active_with_histogram(self):
     self.set_up_with_runs([self._RUN_WITH_HISTOGRAM])
@@ -132,8 +183,10 @@ class HistogramsPluginTest(tf.test.TestCase):
     self.set_up_with_runs([self._RUN_WITH_SCALARS])
     self.assertFalse(self.plugin.is_active())
 
-  def test_active_with_both(self):
-    self.set_up_with_runs([self._RUN_WITH_HISTOGRAM, self._RUN_WITH_SCALARS])
+  def test_active_with_all(self):
+    self.set_up_with_runs([self._RUN_WITH_SCALARS,
+                           self._RUN_WITH_LEGACY_HISTOGRAM,
+                           self._RUN_WITH_HISTOGRAM])
     self.assertTrue(self.plugin.is_active())
 
 
